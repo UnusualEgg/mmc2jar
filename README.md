@@ -9,3 +9,6 @@ good for amethys launcher
 2. client.jar/version.jar (available in versions in .minecraft)
 3. version.json (available in versions in .minecraft)
 4. output version name (without any file extensions)
+
+# dependencies
+- vaxis (for terminal user interface)
