@@ -7,8 +7,8 @@ good for amethys launcher
 ## arguments
 1. unzipped mmc instance
 2. client.jar/version.jar (available in versions in .minecraft)
-3. version.json (available in versions in .minecraft)
-4. output version name (without any file extensions)
+3. output version name (without any file extensions)
+4. [optional] version.json (available in versions in .minecraft)
 
 # dependencies
 - vaxis (for terminal user interface)

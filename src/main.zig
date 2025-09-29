@@ -7,14 +7,14 @@ const Event = union(enum) {
     focus_in,
 };
 fn get_selection(alloc: std.mem.Allocator, mmc_val: *MMCPack) !void {
-
+    var buffer: [4096]u8 = undefined;
     // Initialize a tty
-    var tty: vaxis.tty.PosixTty = try vaxis.Tty.init();
+    var tty: vaxis.tty.PosixTty = try vaxis.Tty.init(&buffer);
     defer tty.deinit();
     // try tty.anyWriter().print("Hello!", .{});
 
     var vx = try vaxis.init(alloc, .{});
-    defer vx.deinit(alloc, tty.anyWriter());
+    defer vx.deinit(alloc, tty.writer());
 
     var loop: vaxis.Loop(Event) = .{
         .tty = &tty,
@@ -24,9 +24,9 @@ fn get_selection(alloc: std.mem.Allocator, mmc_val: *MMCPack) !void {
     try loop.start();
     defer loop.stop();
 
-    try vx.enterAltScreen(tty.anyWriter());
+    try vx.enterAltScreen(tty.writer());
 
-    try vx.queryTerminal(tty.anyWriter(), 1 * std.time.ns_per_s);
+    try vx.queryTerminal(tty.writer(), 1 * std.time.ns_per_s);
 
     var cursor: usize = 0;
     var win_cursor: usize = 0;
@@ -71,7 +71,7 @@ fn get_selection(alloc: std.mem.Allocator, mmc_val: *MMCPack) !void {
                 }
             },
             .winsize => |ws| {
-                try vx.resize(alloc, tty.anyWriter(), ws);
+                try vx.resize(alloc, tty.writer(), ws);
                 win = vx.window();
                 if (cursor -| win_cursor > win.height -| 1) {
                     cursor = win_cursor + (win.height -| 1);
@@ -117,7 +117,7 @@ fn get_selection(alloc: std.mem.Allocator, mmc_val: *MMCPack) !void {
             });
         }
 
-        try vx.render(tty.anyWriter());
+        try vx.render(tty.writer());
     }
 }
 fn recursive_move(alloc: std.mem.Allocator, from_path: []const u8, to_path: []const u8) !void {
@@ -145,7 +145,9 @@ fn recursive_move(alloc: std.mem.Allocator, from_path: []const u8, to_path: []co
     }
 }
 fn copy_to_output(alloc: std.mem.Allocator, file: std.fs.File, tmp: std.fs.Dir, dest: []const u8) !void {
-    try std.zip.extract(tmp, file.seekableStream(), .{});
+    var buffer: [4096]u8 = undefined;
+    var reader = file.reader(&buffer);
+    try std.zip.extract(tmp, &reader, .{});
     //mv tmp files to output_dir
     try recursive_move(alloc, "tmp", dest);
 }
@@ -157,22 +159,18 @@ pub fn main() !void {
     var args = try std.process.argsWithAllocator(alloc);
     _ = args.skip();
     const mmc = args.next() orelse {
-        _ = try std.io.getStdErr().write("expected mmc dir");
+        _ = try std.fs.File.stderr().write("expected mmc dir");
         return;
     };
     const version_jar = args.next() orelse {
-        _ = try std.io.getStdErr().write("expected mc version jar");
+        _ = try std.fs.File.stderr().write("expected mc version jar");
         return;
     };
-    const version_json = args.next() orelse {
-        _ = try std.io.getStdErr().write("expected mc version json");
-        return;
-    };
-    _ = version_json;
     const output_name = args.next() orelse {
-        _ = try std.io.getStdErr().write("expected output version name(no file extension)");
+        _ = try std.fs.File.stderr().write("expected output version name(no file extension)");
         return;
     };
+    const version_json_optional = args.next();
 
     var cwd = std.fs.cwd();
     var mmc_path = try cwd.openDir(mmc, .{});
@@ -187,12 +185,19 @@ pub fn main() !void {
 
     try get_selection(alloc, &mmc_val);
 
-    try cwd.makeDir(output_name);
+    cwd.makeDir(output_name) catch |e| {
+        switch (e) {
+            error.PathAlreadyExists => {},
+            else => return e,
+        }
+    };
     //extract version jar
     var version_jar_file = try cwd.openFile(version_jar, .{});
     var output_dir = try cwd.openDir(output_name, .{});
 
-    try std.zip.extract(output_dir, version_jar_file.seekableStream(), .{});
+    var buffer: [4096]u8 = undefined;
+    var reader = version_jar_file.reader(&buffer);
+    try std.zip.extract(output_dir, &reader, .{});
 
     //go thru the pack and put the enabled jar in the output dir
     var patches = try mmc_path.openDir("patches", .{});
@@ -244,31 +249,65 @@ pub fn main() !void {
     patches.close();
 
     try output_dir.deleteTree("META-INF");
-
-    const ext: [:0]const u8 = ".jar";
-    const ext_slice: []const u8 = ext[0..(ext.len)];
-    const slices: [2][]const u8 = .{ output_name, ext_slice };
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    const arena_alloc = arena.allocator();
-    const output_jar = try std.mem.concat(arena_alloc, u8, &slices);
-    // const abs_output = try output_dir.realpathAlloc(arena_alloc, ".");
-    //zip up output dir (and delete it)
-    const run = try std.process.Child.run(.{
-        .allocator = arena_alloc,
-        .argv = &.{
-            "jar",
-            "cf",
-            output_jar,
-            "-C",
-            output_name,
-            ".",
-        },
-    });
-    std.debug.print("[stderr] {s}\n[stdout] {s}\n", .{ run.stderr, run.stdout });
-    arena.deinit();
+    {
+        const ext: [:0]const u8 = ".jar";
+        const ext_slice: []const u8 = ext[0..(ext.len)];
+        const slices: [2][]const u8 = .{ output_name, ext_slice };
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        const arena_alloc = arena.allocator();
+        const output_jar = try std.mem.concat(arena_alloc, u8, &slices);
+        // const abs_output = try output_dir.realpathAlloc(arena_alloc, ".");
+        //zip up output dir (and delete it)
+        const run = try std.process.Child.run(.{
+            .allocator = arena_alloc,
+            .argv = &.{
+                "jar",
+                "cf",
+                output_jar,
+                "-C",
+                output_name,
+                ".",
+            },
+        });
+        std.debug.print("[stderr] {s}\n[stdout] {s}\n", .{ run.stderr, run.stdout });
+        arena.deinit();
+    }
     //clean up
     output_dir.close();
     try cwd.deleteTree(output_name);
+
+    //now make version.json
+    if (version_json_optional) |version_json| {
+        var stdout = std.fs.File.stdout().writer(&buffer);
+        try stdout.interface.print("editing {s}\n", .{version_json});
+
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const arena_alloc = arena.allocator();
+
+        var version_json_file = try cwd.openFile(version_json, .{});
+        defer version_json_file.close();
+        const version_json_bytes = try version_json_file.readToEndAlloc(arena_alloc, std.math.maxInt(usize));
+
+        var version_obj = try std.json.parseFromSliceLeaky(std.json.Value, arena_alloc, version_json_bytes, .{ .ignore_unknown_fields = true });
+        try version_obj.object.put("id", std.json.Value{ .string = output_name });
+        try version_obj.object.put("mainClass", std.json.Value{ .string = "net.minecraft.client.Minecraft" });
+
+        // const output_bytes = try std.json.Stringify.(arena_alloc, version_obj, .{});
+
+        const ext: [:0]const u8 = ".json";
+        const ext_slice: []const u8 = ext[0..(ext.len)];
+        const slices: [2][]const u8 = .{ output_name, ext_slice };
+        const output_json = try std.mem.concat(arena_alloc, u8, &slices);
+
+        var file = try cwd.createFile(output_json, .{});
+        var file_writer = file.writer(&buffer);
+        try std.json.Stringify.value(version_obj, .{ .whitespace = .indent_tab }, &file_writer.interface);
+        // try version_obj.jsonStringify(&file_writer.interface);
+        // try file.writeAll(output_bytes);
+        try file_writer.end();
+        file.close();
+    }
 }
 
 const Component = struct {
@@ -286,4 +325,10 @@ const JarMod = struct {
 };
 const Patch = struct {
     jarMods: []JarMod,
+};
+const Artifact = struct {
+    path: ?[]const u8,
+    sha1: ?[]const u8,
+    size: ?usize,
+    url: ?[]const u8,
 };

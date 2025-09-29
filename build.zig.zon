@@ -24,11 +24,11 @@
     // original project's identity. Thus it is recommended to leave the comment
     // on the following line intact, so that it shows up in code reviews that
     // modify the field.
-    .fingerprint = 0x4c6af58f2a54a4ae, // Changing this has security and trust implications.
+    .fingerprint = 0xc07ad768341830ce, // Changing this has security and trust implications.
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.15.1",
 
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
@@ -38,7 +38,7 @@
     .dependencies = .{
         .vaxis = .{
             .url = "https://github.com/rockorager/libvaxis/archive/refs/heads/main.zip",
-            .hash = "vaxis-0.5.1-BWNV_JIWCQAoX8lZ-5eLf-sFzA-h7aXvNNEenyC2b83s",
+            .hash = "vaxis-0.5.1-BWNV_BMgCQDXdZzABeY4F_xwgE7nHFtYEP07KgEwJWo8",
             // .path = "main.zip",
         },
     },
