@@ -229,11 +229,14 @@ pub fn main() !void {
                 }
             };
         }
-        const data = try patch_file.readToEndAlloc(alloc, std.math.maxInt(usize));
-        patch_file.close();
-        //parse json format
-        var parsed_patch = try std.json.parseFromSlice(Patch, alloc, data, .{ .ignore_unknown_fields = true });
-        alloc.free(data);
+        var parsed_patch =
+            blk: {
+                const data = try patch_file.readToEndAlloc(alloc, std.math.maxInt(usize));
+                defer alloc.free(data);
+                patch_file.close();
+                //parse json format
+                break :blk try std.json.parseFromSlice(Patch, alloc, data, .{ .ignore_unknown_fields = true });
+            };
         defer parsed_patch.deinit();
         const patch = parsed_patch.value;
         //copy jar
